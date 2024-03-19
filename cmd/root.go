@@ -12,7 +12,7 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:  "ite-10-verifier",
+	Use:  "attestation-verifier",
 	RunE: verify,
 }
 
