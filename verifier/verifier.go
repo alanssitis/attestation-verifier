@@ -39,11 +39,11 @@ func Verify(layout *Layout, attestations map[string]*dsse.Envelope, parameters m
 	}
 
 	log.Info("Fetching verifiers...")
-	verifiers, err := getVerifiers(layout.Functionaries)
+	verifiers, verifiersSlice, err := getVerifiers(layout.Functionaries)
 	if err != nil {
 		return err
 	}
-	envVerifier, err := dsse.NewEnvelopeVerifier(verifiers...)
+	envVerifier, err := dsse.NewEnvelopeVerifier(verifiersSlice...)
 	if err != nil {
 		return err
 	}
@@ -107,7 +107,7 @@ func Verify(layout *Layout, attestations map[string]*dsse.Envelope, parameters m
 				expectedPredicate.Threshold = 1
 			}
 
-			matchedPredicates := getPredicates(stepStatements, expectedPredicate.PredicateType, expectedPredicate.Functionaries)
+			matchedPredicates := getPredicates(stepStatements, expectedPredicate.PredicateType, expectedPredicate.Functionaries, verifiers)
 			if len(matchedPredicates) < expectedPredicate.Threshold {
 				return fmt.Errorf("threshold not met for step %s", step.Name)
 			}
@@ -151,53 +151,67 @@ func Verify(layout *Layout, attestations map[string]*dsse.Envelope, parameters m
 	return nil
 }
 
-func getVerifiers(publicKeys map[string]Functionary) ([]dsse.Verifier, error) {
-	verifiers := []dsse.Verifier{}
+func getVerifiers(publicKeys map[string]Functionary) (map[string]dsse.Verifier, []dsse.Verifier, error) {
+	verifiers := make(map[string]dsse.Verifier)
+	verifiersSlice := []dsse.Verifier{}
 
-	for _, key := range publicKeys {
-		log.Infof("Creating verifier for key %s", key.KeyID)
-		sslibKey := &signerverifier.SSLibKey{
-			KeyIDHashAlgorithms: key.KeyIDHashAlgorithms,
-			KeyType:             key.KeyType,
-			KeyVal: signerverifier.KeyVal{
-				Public: key.KeyVal.Public,
-			},
-			Scheme: key.Scheme,
-			KeyID:  key.KeyID,
-		}
-
-		switch key.KeyType { // TODO: use scheme
-		case "rsa":
-			verifier, err := signerverifier.NewRSAPSSSignerVerifierFromSSLibKey(sslibKey)
-			if err != nil {
-				return nil, err
-			}
-
-			verifiers = append(verifiers, verifier)
-		case "ecdsa":
-			verifier, err := signerverifier.NewECDSASignerVerifierFromSSLibKey(sslibKey)
-			if err != nil {
-				return nil, err
-			}
-
-			verifiers = append(verifiers, verifier)
-		case "ed25519":
-			verifier, err := signerverifier.NewED25519SignerVerifierFromSSLibKey(sslibKey)
-			if err != nil {
-				return nil, err
-			}
-
-			verifiers = append(verifiers, verifier)
-		}
+	for name, key := range publicKeys {
+		log.Infof("Creating verifier for key of functionary %s", name)
+		verifier, err := verifierFromFunctionary(key)
+        if err != nil {
+            return nil, nil, err
+        }
+        verifiers[name] = verifier
+        verifiersSlice = append(verifiersSlice, verifier)
 	}
 
-	return verifiers, nil
+	return verifiers, verifiersSlice, nil
 }
 
-func getPredicates(statements map[AttestationIdentifier]*attestationv1.Statement, predicateType string, functionaries []string) map[string]*attestationv1.Statement {
+func verifierFromFunctionary(f Functionary) (dsse.Verifier, error) {
+    switch f.Scheme {
+    case "rsa":
+        sslibKey, err := signerverifier.LoadRSAPSSKeyFromFile(f.KeyPath)
+        if err != nil {
+            return nil, err
+        }
+        verifier, err := signerverifier.NewRSAPSSSignerVerifierFromSSLibKey(sslibKey)
+        if err != nil {
+            return nil, err
+        }
+        return verifier, nil
+    case "ecdsa":
+        sslibKey, err := signerverifier.LoadECDSAKeyFromFile(f.KeyPath)
+        if err != nil {
+            return nil, err
+        }
+        verifier, err := signerverifier.NewECDSASignerVerifierFromSSLibKey(sslibKey)
+        if err != nil {
+            return nil, err
+        }
+        return verifier, nil
+    case "ed25519":
+        sslibKey, err := signerverifier.LoadED25519KeyFromFile(f.KeyPath)
+        if err != nil {
+            return nil, err
+        }
+        verifier, err := signerverifier.NewED25519SignerVerifierFromSSLibKey(sslibKey)
+        if err != nil {
+            return nil, err
+        }
+        return verifier, nil
+    }
+    return nil, errors.New("Unrecognized key type.")
+}
+
+func getPredicates(statements map[AttestationIdentifier]*attestationv1.Statement, predicateType string, functionaries []string, verifiers map[string]dsse.Verifier) map[string]*attestationv1.Statement {
 	matchedPredicates := map[string]*attestationv1.Statement{}
 
-	for _, keyID := range functionaries {
+	for _, functionary := range functionaries {
+        keyID, err := verifiers[functionary].KeyID()
+        if err != nil {
+            continue
+        }
 		statement, ok := statements[AttestationIdentifier{PredicateType: predicateType, Functionary: keyID}]
 		if ok {
 			matchedPredicates[keyID] = statement
@@ -227,7 +241,7 @@ func getActivation(statement *attestationv1.Statement) (interpreter.Activation, 
 
 func getStepName(name string) string {
 	nameS := strings.Split(name, ".")
-	nameS = nameS[:len(nameS)-1]
+	nameS = nameS[:len(nameS)-2]
 	return strings.Join(nameS, ".")
 }
 

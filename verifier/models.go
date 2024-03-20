@@ -8,11 +8,9 @@ import (
 
 // copied from go-sslib to use yaml tags
 type Functionary struct {
-	KeyIDHashAlgorithms []string `yaml:"keyIDHashAlgorithms"`
 	KeyType             string   `yaml:"keyType"`
-	KeyVal              KeyVal   `yaml:"keyVal"`
 	Scheme              string   `yaml:"scheme"`
-	KeyID               string   `yaml:"keyID"`
+	KeyPath             string   `yaml:"keyPath"`
 }
 
 type KeyVal struct {
